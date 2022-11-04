@@ -1,6 +1,4 @@
-﻿using CustomDependencyInjectionContainer_DI.Abstractions;
-
-namespace CustomDependencyInjectionContainer_DI.Interfaces;
+﻿namespace CustomDependencyInjectionContainer_DI.Abstractions;
 public interface IContainerBuilder
 {
     public IContainer Build();

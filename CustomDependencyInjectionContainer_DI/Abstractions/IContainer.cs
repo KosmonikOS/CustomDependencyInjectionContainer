@@ -1,5 +1,5 @@
 ﻿namespace CustomDependencyInjectionContainer_DI.Abstractions;
-public interface IContainer
+public interface IContainer :IDisposable,IAsyncDisposable
 {
     public IScope CreateScope();
 }

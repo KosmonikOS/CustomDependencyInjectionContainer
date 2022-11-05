@@ -9,6 +9,7 @@ public class Container : IContainer
     private readonly Dictionary<Type, ServiceDescriptor> descriptors;
     private readonly ConcurrentDictionary<Type, Func<IScope, object>> activators = new();
     private readonly Scope rootScope;
+    private bool disposed = false;
     public Container(List<ServiceDescriptor> descriptors)
     {
         this.descriptors = descriptors.ToDictionary(x => x.ServiceType);
@@ -16,6 +17,8 @@ public class Container : IContainer
     }
     public IScope CreateScope()
     {
+        if (disposed)
+            throw new InvalidOperationException("Scope has been already disposed");
         return new Scope(this);
     }
     private ServiceDescriptor FindDescriptor(Type serviceType)
@@ -46,34 +49,75 @@ public class Container : IContainer
         {
             var argsForCreation = new object[args.Length];
             for (int i = 0; i < args.Length; i++)
-            {
                 argsForCreation[i] = CreateInstance(args[i].ParameterType, x);
-            }
             return ctor.Invoke(argsForCreation);
         };
+    }
+    public void Dispose()
+    {
+        rootScope.Dispose();
+        disposed = true;
+    }
+    public ValueTask DisposeAsync()
+    {
+        var task = rootScope.DisposeAsync();
+        disposed = true;
+        return task;
     }
     private class Scope : IScope
     {
         private readonly Container container;
         private readonly ConcurrentDictionary<Type, object> scopedServices = new();
+        private readonly ConcurrentStack<object> disposables = new();
+        private bool disposed = false;
         public Scope(Container container)
         {
             this.container = container;
         }
         public object Resolve(Type serviceType)
         {
+            if (disposed)
+                throw new InvalidOperationException("Container has been already disposed");
             var descriptor = container.FindDescriptor(serviceType);
             return ResolveDescriptor(descriptor);
         }
         private object ResolveDescriptor(ServiceDescriptor descriptor)
         {
             if (descriptor.Lifetime == Lifetime.Transient)
-                return container.CreateInstance(descriptor.ServiceType, this);
+                return CreateDisposableInstance(descriptor.ServiceType);
             else if (descriptor.Lifetime == Lifetime.Scoped || this == container.rootScope)
                 return scopedServices.GetOrAdd(descriptor.ServiceType,
-                    x => container.CreateInstance(descriptor.ServiceType, this));
+                    x => CreateDisposableInstance(descriptor.ServiceType));
             return container.rootScope.ResolveDescriptor(descriptor);
-
+        }
+        private object CreateDisposableInstance(Type serviceType)
+        {
+            var instance = container.CreateInstance(serviceType, this);
+            if (instance is IDisposable || instance is IAsyncDisposable)
+                disposables.Push(instance);
+            return instance;
+        }
+        public void Dispose()
+        {
+            foreach (var disposable in disposables)
+            {
+                if (disposable is IDisposable d)
+                    d.Dispose();
+                else if (disposable is IAsyncDisposable ad)
+                    ad.DisposeAsync().GetAwaiter().GetResult();
+            }
+            disposed = true;
+        }
+        public async ValueTask DisposeAsync()
+        {
+            foreach (var disposable in disposables)
+            {
+                if (disposable is IAsyncDisposable ad)
+                    await ad.DisposeAsync();
+                else if (disposable is IDisposable d)
+                    d.Dispose();
+            }
+            disposed = true;
         }
     }
 }

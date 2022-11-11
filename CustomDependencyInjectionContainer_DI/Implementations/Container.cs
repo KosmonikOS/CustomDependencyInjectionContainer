@@ -8,12 +8,14 @@ public class Container : IContainer
 {
     private readonly Dictionary<Type, ServiceDescriptor> descriptors;
     private readonly ConcurrentDictionary<Type, Func<IScope, object>> activators = new();
+    private readonly ActivationBuilder activationBuilder;
     private readonly Scope rootScope;
     private bool disposed = false;
-    public Container(List<ServiceDescriptor> descriptors)
+    public Container(List<ServiceDescriptor> descriptors, ActivationBuilder activationBuilder)
     {
         this.descriptors = descriptors.ToDictionary(x => x.ServiceType);
         rootScope = new Scope(this);
+        this.activationBuilder = activationBuilder;
     }
     public IScope CreateScope()
     {
@@ -42,16 +44,7 @@ public class Container : IContainer
         if (descriptor is FactoryBasedServiceDescriptor fd)
             return fd.Factory;
         var td = (TypeBasedServiceDescriptor)descriptor;
-        var ctor = td.ImplementationType.GetConstructors(BindingFlags.Public
-            | BindingFlags.Instance).Single();
-        var args = ctor.GetParameters();
-        return x =>
-        {
-            var argsForCreation = new object[args.Length];
-            for (int i = 0; i < args.Length; i++)
-                argsForCreation[i] = CreateInstance(args[i].ParameterType, x);
-            return ctor.Invoke(argsForCreation);
-        };
+        return activationBuilder.BuildActivation(td);
     }
     public void Dispose()
     {

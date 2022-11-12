@@ -1,19 +1,31 @@
 ﻿using CustomDependencyInjectionContainer_DI.Abstractions;
 using CustomDependencyInjectionContainer_DI.Enums;
+using System.Collections;
 using System.Collections.Concurrent;
 using System.Reflection;
 
 namespace CustomDependencyInjectionContainer_DI.Implementations;
 public class Container : IContainer
 {
-    private readonly Dictionary<Type, ServiceDescriptor> descriptors;
-    private readonly ConcurrentDictionary<Type, Func<IScope, object>> activators = new();
+    private readonly Dictionary<Type, ServiceDescriptor> descriptors = new();
+    private readonly ConcurrentDictionary<ServiceDescriptor, Func<IScope, object>> activators = new();
     private readonly ActivationBuilder activationBuilder;
     private readonly Scope rootScope;
     private bool disposed = false;
-    public Container(List<ServiceDescriptor> descriptors, ActivationBuilder activationBuilder)
+    public Container(IEnumerable<ServiceDescriptor> sDescriptors, ActivationBuilder activationBuilder)
     {
-        this.descriptors = descriptors.ToDictionary(x => x.ServiceType);
+        foreach (var dg in sDescriptors.GroupBy(x => x.ServiceType))
+        {
+            var items = dg.ToArray();
+            if (items.Length == 1)
+                this.descriptors.Add(dg.Key, items[0]);
+            else
+            {
+                var md = new MultipleServiceDescriptor() { Descriptors = items, ServiceType = dg.Key };
+                var genericType = typeof(IEnumerable<>).MakeGenericType(dg.Key);
+                this.descriptors.Add(genericType, BuildMultipleDescriptor(genericType, md));
+            }
+        }
         rootScope = new Scope(this);
         this.activationBuilder = activationBuilder;
     }
@@ -23,22 +35,34 @@ public class Container : IContainer
             throw new InvalidOperationException("Scope has been already disposed");
         return new Scope(this);
     }
+    private ServiceDescriptor BuildMultipleDescriptor(Type serviceType, MultipleServiceDescriptor md)
+    {
+        return new FactoryBasedServiceDescriptor()
+        {
+            ServiceType = serviceType,
+            Lifetime = Lifetime.Transient,
+            Factory = s =>
+            {
+                var scope = (Scope)s;
+                var services = Array.CreateInstance(md.ServiceType, md.Descriptors.Length);
+                for (int i = 0; i < services.Length; i++)
+                    services.SetValue(scope.ResolveDescriptor(md.Descriptors[i]), i);
+                return services;
+            }
+        };
+    }
     private ServiceDescriptor FindDescriptor(Type serviceType)
     {
-        var descriptor = descriptors[serviceType];
-        if (descriptor == null)
+        if (!descriptors.TryGetValue(serviceType, out var descriptor))
             throw new InvalidOperationException($"Unable to find {serviceType}");
         return descriptor;
-
     }
-    private object CreateInstance(Type serviceType, IScope scope)
+    private object CreateInstance(ServiceDescriptor descriptor, IScope scope)
     {
-        return activators.GetOrAdd(serviceType,
-            x => CreateActivator(serviceType))(scope);
+        return activators.GetOrAdd(descriptor, x => CreateActivator(descriptor))(scope);
     }
-    private Func<IScope, object> CreateActivator(Type serviceType)
+    private Func<IScope, object> CreateActivator(ServiceDescriptor descriptor)
     {
-        var descriptor = FindDescriptor(serviceType);
         if (descriptor is InstanceBasedServiceDescriptor id)
             return _ => id.Instance;
         if (descriptor is FactoryBasedServiceDescriptor fd)
@@ -74,18 +98,18 @@ public class Container : IContainer
             var descriptor = container.FindDescriptor(serviceType);
             return ResolveDescriptor(descriptor);
         }
-        private object ResolveDescriptor(ServiceDescriptor descriptor)
+        internal object ResolveDescriptor(ServiceDescriptor descriptor)
         {
             if (descriptor.Lifetime == Lifetime.Transient)
-                return CreateDisposableInstance(descriptor.ServiceType);
+                return CreateDisposableInstance(descriptor);
             else if (descriptor.Lifetime == Lifetime.Scoped || this == container.rootScope)
                 return scopedServices.GetOrAdd(descriptor.ServiceType,
-                    x => CreateDisposableInstance(descriptor.ServiceType));
+                    x => CreateDisposableInstance(descriptor));
             return container.rootScope.ResolveDescriptor(descriptor);
         }
-        private object CreateDisposableInstance(Type serviceType)
+        private object CreateDisposableInstance(ServiceDescriptor descriptor)
         {
-            var instance = container.CreateInstance(serviceType, this);
+            var instance = container.CreateInstance(descriptor, this);
             if (instance is IDisposable || instance is IAsyncDisposable)
                 disposables.Push(instance);
             return instance;

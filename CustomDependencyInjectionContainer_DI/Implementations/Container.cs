@@ -1,13 +1,11 @@
 ﻿using CustomDependencyInjectionContainer_DI.Abstractions;
 using CustomDependencyInjectionContainer_DI.Enums;
-using System.Collections;
 using System.Collections.Concurrent;
-using System.Reflection;
 
 namespace CustomDependencyInjectionContainer_DI.Implementations;
 public class Container : IContainer
 {
-    private readonly Dictionary<Type, ServiceDescriptor> descriptors = new();
+    private readonly ConcurrentDictionary<Type, ServiceDescriptor> descriptors = new();
     private readonly ConcurrentDictionary<ServiceDescriptor, Func<IScope, object>> activators = new();
     private readonly ActivationBuilder activationBuilder;
     private readonly Scope rootScope;
@@ -18,12 +16,12 @@ public class Container : IContainer
         {
             var items = dg.ToArray();
             if (items.Length == 1)
-                this.descriptors.Add(dg.Key, items[0]);
+                this.descriptors.TryAdd(dg.Key, items[0]);
             else
             {
                 var md = new MultipleServiceDescriptor() { Descriptors = items, ServiceType = dg.Key };
                 var genericType = typeof(IEnumerable<>).MakeGenericType(dg.Key);
-                this.descriptors.Add(genericType, BuildMultipleDescriptor(genericType, md));
+                this.descriptors.TryAdd(genericType, BuildMultipleDescriptor(genericType, md));
             }
         }
         rootScope = new Scope(this);
@@ -53,9 +51,30 @@ public class Container : IContainer
     }
     private ServiceDescriptor FindDescriptor(Type serviceType)
     {
-        if (!descriptors.TryGetValue(serviceType, out var descriptor))
-            throw new InvalidOperationException($"Unable to find {serviceType}");
-        return descriptor;
+        if (descriptors.TryGetValue(serviceType, out var descriptor))
+            return descriptor;
+        if (serviceType.IsConstructedGenericType)
+            return BuildGenericDescriptor(serviceType);
+        throw new InvalidOperationException($"Unable to find {serviceType}");
+    }
+
+    private ServiceDescriptor BuildGenericDescriptor(Type serviceType)
+    {
+        var generic = serviceType.GetGenericTypeDefinition();
+        var gDescriptor = FindDescriptor(generic);
+        if (gDescriptor is TypeBasedServiceDescriptor tb)
+        {
+            var gArgs = serviceType.GetGenericArguments();
+            var concreteImplementation = tb.ImplementationType
+                .MakeGenericType(gArgs);
+            return descriptors.GetOrAdd(serviceType, new TypeBasedServiceDescriptor()
+            {
+                Lifetime = gDescriptor.Lifetime,
+                ImplementationType = concreteImplementation,
+                ServiceType = serviceType
+            });
+        }
+        throw new InvalidOperationException($"Generic {serviceType} can only be registered with implementation type");
     }
     private object CreateInstance(ServiceDescriptor descriptor, IScope scope)
     {

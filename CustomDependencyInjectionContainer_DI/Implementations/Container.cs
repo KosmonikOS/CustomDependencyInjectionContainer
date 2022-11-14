@@ -1,4 +1,5 @@
-﻿using CustomDependencyInjectionContainer_DI.Abstractions;
+﻿using System.Collections;
+using CustomDependencyInjectionContainer_DI.Abstractions;
 using CustomDependencyInjectionContainer_DI.Enums;
 using System.Collections.Concurrent;
 
@@ -19,8 +20,12 @@ public class Container : IContainer
                 this.descriptors[dg.Key] = descriptors[0];
             else
             {
-                var genericType = typeof(IEnumerable<>).MakeGenericType(dg.Key);
-                this.descriptors[genericType] = BuildMultipleDescriptor(dg.Key, genericType, descriptors);
+                this.descriptors[dg.Key] = new MultipleServiceDescriptor()
+                {
+                    Descriptors = descriptors,
+                    Lifetime = Lifetime.Transient,
+                    ServiceType = dg.Key
+                };
             }
         }
         rootScope = new Scope(this);
@@ -47,28 +52,76 @@ public class Container : IContainer
     {
         if (descriptors.TryGetValue(serviceType, out var descriptor))
             return descriptor;
+        if (serviceType.IsAssignableTo(typeof(IEnumerable)) && serviceType.IsGenericType
+             && serviceType.GetGenericTypeDefinition() == typeof(IEnumerable<>))
+        {
+            var nestedServiceType = serviceType.GetGenericArguments()[0];
+            return nestedServiceType.IsGenericType
+                ? BuildMultipleGenericDescriptor(nestedServiceType, serviceType)
+                : BuildMultipleDescriptor(nestedServiceType, serviceType);
+        }
         if (serviceType.IsConstructedGenericType)
             return BuildGenericDescriptor(serviceType);
         throw new InvalidOperationException($"Unable to find {serviceType}");
     }
-    private ServiceDescriptor BuildMultipleDescriptor(Type serviceType, Type genericType, ServiceDescriptor[] descriptors)
+    private ServiceDescriptor BuildMultipleGenericDescriptor(Type serviceType, Type collectionType)
     {
-        return new FactoryBasedServiceDescriptor()
+        var generic = serviceType.GetGenericTypeDefinition();
+        var gArgs = serviceType.GetGenericArguments();
+        if (FindDescriptor(generic) is MultipleServiceDescriptor md)
         {
-            ServiceType = genericType,
-            Lifetime = Lifetime.Transient,
-            Factory = s =>
+            return descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
             {
-                var scope = (Scope)s;
-                var services = Array.CreateInstance(serviceType, descriptors.Length);
-                for (int i = 0; i < services.Length; i++)
+                ServiceType = serviceType,
+                Lifetime = Lifetime.Transient,
+                Factory = s =>
                 {
-                    var rr = scope.ResolveDescriptor(descriptors[i]);
-                    services.SetValue(rr, i);
+                    var scope = (Scope)s;
+                    var services = Array.CreateInstance(serviceType, md.Descriptors.Length);
+                    for (var i = 0; i < services.Length; i++)
+                    {
+                        var gDescriptor = MakeDescriptorGeneric(md.Descriptors[i], gArgs);
+                        services.SetValue(scope.ResolveDescriptor(gDescriptor), i);
+                    }
+                    return services;
                 }
-                return services;
-            }
-        };
+            });
+        }
+        throw new InvalidOperationException($"{serviceType} has multiple implementations , cannot choose one");
+    }
+    private ServiceDescriptor BuildMultipleDescriptor(Type serviceType, Type collectionType)
+    {
+        if (FindDescriptor(serviceType) is MultipleServiceDescriptor md)
+        {
+            return descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
+            {
+                ServiceType = serviceType,
+                Lifetime = Lifetime.Transient,
+                Factory = s =>
+                {
+                    var scope = (Scope)s;
+                    var services = Array.CreateInstance(serviceType, md.Descriptors.Length);
+                    for (var i = 0; i < services.Length; i++)
+                        services.SetValue(scope.ResolveDescriptor(md.Descriptors[i]), i);
+                    return services;
+                }
+            });
+        }
+        throw new InvalidOperationException($"{serviceType} has multiple implementations , cannot choose one");
+    }
+    private ServiceDescriptor MakeDescriptorGeneric(ServiceDescriptor descriptor, Type[] args)
+    {
+        if (descriptor is TypeBasedServiceDescriptor tb)
+        {
+            var concreteImplementation = tb.ImplementationType.MakeGenericType(args);
+            return new TypeBasedServiceDescriptor()
+            {
+                Lifetime = descriptor.Lifetime,
+                ImplementationType = concreteImplementation,
+                ServiceType = descriptor.ServiceType
+            };
+        }
+        throw new InvalidOperationException($"Generic {descriptor.ServiceType} can only be registered with implementation type");
     }
     private ServiceDescriptor BuildGenericDescriptor(Type serviceType)
     {
@@ -145,7 +198,7 @@ public class Container : IContainer
         {
             if (descriptor.Lifetime == Lifetime.Transient)
                 return CreateDisposableInstance(descriptor);
-            else if (descriptor.Lifetime == Lifetime.Scoped || this == container.rootScope)
+            if (descriptor.Lifetime == Lifetime.Scoped || this == container.rootScope)
                 return scopedServices.GetOrAdd(descriptor,
                     x => CreateDisposableInstance(descriptor));
             return container.rootScope.ResolveDescriptor(descriptor);

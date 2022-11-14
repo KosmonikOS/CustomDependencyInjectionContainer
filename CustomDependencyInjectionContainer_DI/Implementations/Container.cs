@@ -6,21 +6,21 @@ using System.Collections.Concurrent;
 namespace CustomDependencyInjectionContainer_DI.Implementations;
 public class Container : IContainer
 {
-    private readonly ConcurrentDictionary<Type, ServiceDescriptor> descriptors = new();
-    private readonly ConcurrentDictionary<ServiceDescriptor, Func<IScope, object>> activators = new();
-    private readonly ActivationBuilder activationBuilder;
-    private readonly Scope rootScope;
-    private bool disposed = false;
+    private readonly ConcurrentDictionary<Type, ServiceDescriptor> _descriptors = new();
+    private readonly ConcurrentDictionary<ServiceDescriptor, Func<IScope, object>> _activators = new();
+    private readonly ActivationBuilder _activationBuilder;
+    private readonly Scope _rootScope;
+    private bool _disposed = false;
     public Container(IEnumerable<ServiceDescriptor> sDescriptors, ActivationBuilder activationBuilder)
     {
         foreach (var dg in sDescriptors.GroupBy(x => x.ServiceType))
         {
             var descriptors = dg.ToArray();
             if (descriptors.Length == 1)
-                this.descriptors[dg.Key] = descriptors[0];
+                this._descriptors[dg.Key] = descriptors[0];
             else
             {
-                this.descriptors[dg.Key] = new MultipleServiceDescriptor()
+                this._descriptors[dg.Key] = new MultipleServiceDescriptor()
                 {
                     Descriptors = descriptors,
                     Lifetime = Lifetime.Transient,
@@ -28,29 +28,29 @@ public class Container : IContainer
                 };
             }
         }
-        rootScope = new Scope(this);
-        this.activationBuilder = activationBuilder;
+        _rootScope = new Scope(this);
+        this._activationBuilder = activationBuilder;
     }
     public IScope CreateScope()
     {
-        if (disposed)
+        if (_disposed)
             throw new InvalidOperationException("Scope has been already disposed");
         return new Scope(this);
     }
     public void Dispose()
     {
-        rootScope.Dispose();
-        disposed = true;
+        _rootScope.Dispose();
+        _disposed = true;
     }
     public ValueTask DisposeAsync()
     {
-        var task = rootScope.DisposeAsync();
-        disposed = true;
+        var task = _rootScope.DisposeAsync();
+        _disposed = true;
         return task;
     }
     private ServiceDescriptor FindDescriptor(Type serviceType)
     {
-        if (descriptors.TryGetValue(serviceType, out var descriptor))
+        if (_descriptors.TryGetValue(serviceType, out var descriptor))
             return descriptor;
         if (serviceType.IsAssignableTo(typeof(IEnumerable)) && serviceType.IsGenericType
              && serviceType.GetGenericTypeDefinition() == typeof(IEnumerable<>))
@@ -70,7 +70,7 @@ public class Container : IContainer
         var gArgs = serviceType.GetGenericArguments();
         if (FindDescriptor(generic) is MultipleServiceDescriptor md)
         {
-            return descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
+            return _descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
             {
                 ServiceType = serviceType,
                 Lifetime = Lifetime.Transient,
@@ -93,7 +93,7 @@ public class Container : IContainer
     {
         if (FindDescriptor(serviceType) is MultipleServiceDescriptor md)
         {
-            return descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
+            return _descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
             {
                 ServiceType = serviceType,
                 Lifetime = Lifetime.Transient,
@@ -132,7 +132,7 @@ public class Container : IContainer
             var gArgs = serviceType.GetGenericArguments();
             var concreteImplementation = tb.ImplementationType
                 .MakeGenericType(gArgs);
-            return descriptors.GetOrAdd(serviceType, new TypeBasedServiceDescriptor()
+            return _descriptors.GetOrAdd(serviceType, new TypeBasedServiceDescriptor()
             {
                 Lifetime = gDescriptor.Lifetime,
                 ImplementationType = concreteImplementation,
@@ -143,7 +143,7 @@ public class Container : IContainer
     }
     private object CreateInstance(ServiceDescriptor descriptor, IScope scope)
     {
-        return activators.GetOrAdd(descriptor, x => CreateActivator(descriptor))(scope);
+        return _activators.GetOrAdd(descriptor, x => CreateActivator(descriptor))(scope);
     }
     private Func<IScope, object> CreateActivator(ServiceDescriptor descriptor)
     {
@@ -152,62 +152,62 @@ public class Container : IContainer
         if (descriptor is FactoryBasedServiceDescriptor fd)
             return fd.Factory;
         var td = (TypeBasedServiceDescriptor)descriptor;
-        return activationBuilder.BuildActivation(td);
+        return _activationBuilder.BuildActivation(td);
     }
 
     private class Scope : IScope
     {
-        private readonly Container container;
-        private readonly ConcurrentDictionary<ServiceDescriptor, object> scopedServices = new();
-        private readonly ConcurrentStack<object> disposables = new();
-        private bool disposed = false;
+        private readonly Container _container;
+        private readonly ConcurrentDictionary<ServiceDescriptor, object> _scopedServices = new();
+        private readonly ConcurrentStack<object> _disposables = new();
+        private bool _disposed = false;
         public Scope(Container container)
         {
-            this.container = container;
+            this._container = container;
         }
         public object Resolve(Type serviceType)
         {
-            if (disposed)
+            if (_disposed)
                 throw new InvalidOperationException("Container has been already disposed");
-            var descriptor = container.FindDescriptor(serviceType);
+            var descriptor = _container.FindDescriptor(serviceType);
             return ResolveDescriptor(descriptor);
         }
         public void Dispose()
         {
-            foreach (var disposable in disposables)
+            foreach (var disposable in _disposables)
             {
                 if (disposable is IDisposable d)
                     d.Dispose();
                 else if (disposable is IAsyncDisposable ad)
                     ad.DisposeAsync().GetAwaiter().GetResult();
             }
-            disposed = true;
+            _disposed = true;
         }
         public async ValueTask DisposeAsync()
         {
-            foreach (var disposable in disposables)
+            foreach (var disposable in _disposables)
             {
                 if (disposable is IAsyncDisposable ad)
                     await ad.DisposeAsync();
                 else if (disposable is IDisposable d)
                     d.Dispose();
             }
-            disposed = true;
+            _disposed = true;
         }
         internal object ResolveDescriptor(ServiceDescriptor descriptor)
         {
             if (descriptor.Lifetime == Lifetime.Transient)
                 return CreateDisposableInstance(descriptor);
-            if (descriptor.Lifetime == Lifetime.Scoped || this == container.rootScope)
-                return scopedServices.GetOrAdd(descriptor,
+            if (descriptor.Lifetime == Lifetime.Scoped || this == _container._rootScope)
+                return _scopedServices.GetOrAdd(descriptor,
                     x => CreateDisposableInstance(descriptor));
-            return container.rootScope.ResolveDescriptor(descriptor);
+            return _container._rootScope.ResolveDescriptor(descriptor);
         }
         private object CreateDisposableInstance(ServiceDescriptor descriptor)
         {
-            var instance = container.CreateInstance(descriptor, this);
+            var instance = _container.CreateInstance(descriptor, this);
             if (instance is IDisposable || instance is IAsyncDisposable)
-                disposables.Push(instance);
+                _disposables.Push(instance);
             return instance;
         }
     }

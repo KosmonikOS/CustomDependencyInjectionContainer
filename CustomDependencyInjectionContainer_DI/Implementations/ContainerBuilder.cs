@@ -3,20 +3,20 @@
 namespace CustomDependencyInjectionContainer_DI.Implementations;
 public class ContainerBuilder : IContainerBuilder
 {
-    private readonly List<ServiceDescriptor> descriptors = new();
-    private ActivationBuilder activationBuilder = new LambdaBasedActivationBuilder();
+    private readonly List<ServiceDescriptor> _descriptors = new();
+    private ActivationBuilder _activationBuilder = new LambdaBasedActivationBuilder();
     public IContainerBuilder Add(ServiceDescriptor descriptor)
     {
-        descriptors.Add(descriptor);
+        _descriptors.Add(descriptor);
         return this;
     }
     public IContainer Build()
     {
-        return new Container(descriptors,activationBuilder);
+        return new Container(_descriptors,_activationBuilder);
     }
     public IContainerBuilder UseReflection()
     {
-        activationBuilder = new ReflectionBasedActivationBuilder();
+        _activationBuilder = new ReflectionBasedActivationBuilder();
         return this;
     }
 }

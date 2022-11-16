@@ -68,46 +68,40 @@ public class Container : IContainer
     {
         var generic = serviceType.GetGenericTypeDefinition();
         var gArgs = serviceType.GetGenericArguments();
-        if (FindDescriptor(generic) is MultipleServiceDescriptor md)
+        var md = FindDescriptor(generic).ConvertToMultiple();
+        return _descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
         {
-            return _descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
+            ServiceType = serviceType,
+            Lifetime = Lifetime.Transient,
+            Factory = s =>
             {
-                ServiceType = serviceType,
-                Lifetime = Lifetime.Transient,
-                Factory = s =>
+                var scope = (Scope)s;
+                var services = Array.CreateInstance(serviceType, md.Descriptors.Length);
+                for (var i = 0; i < services.Length; i++)
                 {
-                    var scope = (Scope)s;
-                    var services = Array.CreateInstance(serviceType, md.Descriptors.Length);
-                    for (var i = 0; i < services.Length; i++)
-                    {
-                        var gDescriptor = MakeDescriptorGeneric(md.Descriptors[i], gArgs);
-                        services.SetValue(scope.ResolveDescriptor(gDescriptor), i);
-                    }
-                    return services;
+                    var gDescriptor = MakeDescriptorGeneric(md.Descriptors[i], gArgs);
+                    services.SetValue(scope.ResolveDescriptor(gDescriptor), i);
                 }
-            });
-        }
-        throw new InvalidOperationException($"{serviceType} has multiple implementations , cannot choose one");
+                return services;
+            }
+        });
     }
     private ServiceDescriptor BuildMultipleDescriptor(Type serviceType, Type collectionType)
     {
-        if (FindDescriptor(serviceType) is MultipleServiceDescriptor md)
+        var md = FindDescriptor(serviceType).ConvertToMultiple();
+        return _descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
         {
-            return _descriptors.GetOrAdd(collectionType, new FactoryBasedServiceDescriptor()
+            ServiceType = serviceType,
+            Lifetime = Lifetime.Transient,
+            Factory = s =>
             {
-                ServiceType = serviceType,
-                Lifetime = Lifetime.Transient,
-                Factory = s =>
-                {
-                    var scope = (Scope)s;
-                    var services = Array.CreateInstance(serviceType, md.Descriptors.Length);
-                    for (var i = 0; i < services.Length; i++)
-                        services.SetValue(scope.ResolveDescriptor(md.Descriptors[i]), i);
-                    return services;
-                }
-            });
-        }
-        throw new InvalidOperationException($"{serviceType} has multiple implementations , cannot choose one");
+                var scope = (Scope)s;
+                var services = Array.CreateInstance(serviceType, md.Descriptors.Length);
+                for (var i = 0; i < services.Length; i++)
+                    services.SetValue(scope.ResolveDescriptor(md.Descriptors[i]), i);
+                return services;
+            }
+        });
     }
     private ServiceDescriptor MakeDescriptorGeneric(ServiceDescriptor descriptor, Type[] args)
     {

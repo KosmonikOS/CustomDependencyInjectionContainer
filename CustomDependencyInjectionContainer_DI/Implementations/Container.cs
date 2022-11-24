@@ -8,10 +8,10 @@ public class Container : IContainer
 {
     private readonly ConcurrentDictionary<Type, ServiceDescriptor> _descriptors = new();
     private readonly ConcurrentDictionary<ServiceDescriptor, Func<IScope, object>> _activators = new();
-    private readonly ActivationBuilder _activationBuilder;
+    private readonly IActivationBuilder _activationBuilder;
     private readonly Scope _rootScope;
     private bool _disposed = false;
-    public Container(IEnumerable<ServiceDescriptor> sDescriptors, ActivationBuilder activationBuilder)
+    public Container(IEnumerable<ServiceDescriptor> sDescriptors, IActivationBuilder activationBuilder)
     {
         foreach (var dg in sDescriptors.GroupBy(x => x.ServiceType))
         {

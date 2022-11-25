@@ -3,3 +3,5 @@
 public interface ITestService { }
 
 public class TestService : ITestService { }
+
+public class AnotherTestService : ITestService { }

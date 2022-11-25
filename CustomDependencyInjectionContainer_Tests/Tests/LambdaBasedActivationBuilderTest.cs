@@ -9,8 +9,8 @@ namespace CustomDependencyInjectionContainer_Tests.Tests;
 
 public class LambdaBasedActivationBuilderTest
 {
-    private LambdaBasedActivationBuilder _sut = new();
-    private Mock<IScope> _scope = new();
+    private readonly LambdaBasedActivationBuilder _sut = new();
+    private readonly Mock<IScope> _scope = new();
 
     [Fact]
     public void BuildActivation_ShouldReturnFunc_WithNoNestedServices()
